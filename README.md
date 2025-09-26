@@ -69,3 +69,23 @@ npm install
 
 # Run locally
 npm run dev
+
+## Build for Production
+```bash
+npm run build
+npm run preview
+```
+
+---
+
+## 🔮 Future Enhancements
+- Multi-user support with cloud storage
+- AI-powered insights and pattern detection
+- Integration with Google Fit or other trackers
+- Mobile native app (Android/iOS)
+- Advanced analytics: correlation between metrics, trends, and averages
+
+---
+
+## 💡 Philosophy
+Prism embodies the idea that **the most extraordinary often lies within the ordinary**. By reflecting on daily habits and metrics, the app provides a lens to uncover hidden truths about yourself, fostering growth, clarity, and self-awareness.
