@@ -12,7 +12,7 @@ import "../styles/global.css";
 		<title>Prism - Daily Tracker</title>
 
 		<!-- Chart.js CDN -->
-		<script src="https://cdn.jsdeliver.net/npm/chart.js"></script>
+		<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 	</head>
 
@@ -34,14 +34,16 @@ import "../styles/global.css";
 				<div class="muted" style="margin-bottom: 8px;">Add parameters you want to track.</div>
 				<ul id="paramsList"></ul>
 
-				<form id="addParamForm">
+				<form id="addParamForm" style="margin-top: 10px;">
 					<input
-						id="paramInput"
+						id="paramName"
 						type="text"
 						placeholder="New parameter (e.g., Mood)"
 						required
 					/>
+			
 					<button type="submit" style="margin-top: 6px;">Add Parameter</button>
+				</form>
 			</section>
 
 			<!-- ENTRIES -->
@@ -81,6 +83,8 @@ import "../styles/global.css";
 						step="0.1"
 						value="7"
 					/>
+
+					<textarea id="comment" placeholder="Optional comment..."></textarea>
 
 					<div style="
 						display: flex;
