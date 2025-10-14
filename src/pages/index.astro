@@ -109,7 +109,180 @@ import "../styles/global.css";
 		 </section>
 
 		<script>
-			// 
+			// ------- Simple LocalStorage-backed model -------
+			const LS_PARAMS = 'prism:parameters';
+			const LS_ENTRIES = 'prism:entries';
+
+			const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2,7);
+
+			const readJSON = (key, fallback) => {
+				try {
+					const v = localStorage.getItem(key);
+					return v ? JSON.parse(v) : fallback;
+				}
+				catch(e) {
+					return fallback;
+				}
+			};
+			const writeJSON = (key, obj) => localStorage.setItem(key, JSON.stringify(obj));
+
+			function getParameters(){
+			let p = readJSON(LS_PARAMS, []);
+			if(!p || p.length === 0){
+			p = [
+				{ id: 'p_sleep', name: 'Sleep' },
+				{ id: 'p_study', name: 'Study' },
+				{ id: 'p_ex', name: 'Exercise' }
+			];
+			writeJSON(LS_PARAMS, p);
+			}
+			return p;
+			}
+			function addParameter(name){ const p = getParameters(); const np = {id: uid(), name}; p.push(np); writeJSON(LS_PARAMS, p); return np; }
+			function removeParameter(id){ let p = getParameters().filter(x => x.id !== id); writeJSON(LS_PARAMS, p); }
+
+			function getEntries(){ return readJSON(LS_ENTRIES, []); }
+			function saveEntries(arr){ writeJSON(LS_ENTRIES, arr); }
+			function saveEntry({date, period, parameterId, parameterName, rating, comment}) {
+				const e = { id: uid(), date, period, parameterId, parameterName, rating: Number(rating), comment, createdAt: new Date().toISOString() };
+				const entries = getEntries(); entries.push(e); saveEntries(entries); return e;
+			}
+			function deleteEntry(id){ let entries = getEntries().filter(e => e.id !== id); saveEntries(entries); }
+			function editEntry(updated){ let entries = getEntries().map(e => e.id === updated.id ? {...e, ...updated} : e); saveEntries(entries); }
+
+			// helpers
+			const formatDate = d => d.toISOString().slice(0,10);
+			function lastNDates(n, end = new Date()){
+				const arr = [];
+				for(let i = n-1; i >= 0; i--){
+				const d = new Date(end);
+				d.setDate(end.getDate() - i);
+				arr.push(formatDate(d));
+				}
+				return arr;
+			}
+
+			// ---------- UI wiring ----------
+			document.addEventListener('DOMContentLoaded', () => {
+				const paramsList = document.getElementById('paramsList');
+				const addParamForm = document.getElementById('addParamForm');
+				const paramNameInput = document.getElementById('paramName');
+				const entryParam = document.getElementById('entryParam');
+				const chartParam = document.getElementById('chartParam');
+				const entriesList = document.getElementById('entriesList');
+				const entryForm = document.getElementById('entryForm');
+				const currentDateSpan = document.getElementById('currentDate');
+				const ratingInput = document.getElementById('rating');
+				const ratingValue = document.getElementById('ratingValue');
+				const commentInput = document.getElementById('comment');
+
+				function renderParams(){
+				const params = getParameters();
+				paramsList.innerHTML = '';
+				entryParam.innerHTML = '';
+				chartParam.innerHTML = '';
+				for(const p of params){
+					const li = document.createElement('li');
+					li.textContent = p.name;
+					const del = document.createElement('button'); del.textContent = '✕'; del.className = 'btn-del';
+					del.onclick = () => { if(confirm('Remove parameter "'+p.name+'"?')){ removeParameter(p.id); renderParams(); renderEntries(); renderChart(); } };
+					li.appendChild(del);
+					paramsList.appendChild(li);
+
+					const opt = document.createElement('option'); opt.value = p.id; opt.textContent = p.name; entryParam.appendChild(opt);
+					const opt2 = document.createElement('option'); opt2.value = p.id; opt2.textContent = p.name; chartParam.appendChild(opt2);
+				}
+				}
+
+				function renderEntries(date = formatDate(new Date())){
+				entriesList.innerHTML = '';
+				const entries = getEntries().filter(e => e.date === date);
+				if(entries.length === 0){ entriesList.innerHTML = '<li class="muted">No entries for today</li>'; return; }
+				entries.sort((a,b) => a.parameterName.localeCompare(b.parameterName));
+				for(const e of entries){
+					const li = document.createElement('li'); li.className = 'entry-item';
+					li.innerHTML = `<div><strong>${e.parameterName}</strong> <em style="color:var(--muted)">(${e.period})</em> — ${e.rating}
+									<div class="comment">${e.comment ? e.comment : ''}</div></div>`;
+					const del = document.createElement('button'); del.textContent = 'Delete'; del.className = 'btn-sm';
+					del.onclick = () => { if(confirm('Delete entry?')){ deleteEntry(e.id); renderEntries(date); renderChart(); } };
+					li.appendChild(del);
+					entriesList.appendChild(li);
+				}
+				}
+
+				addParamForm.addEventListener('submit', (ev) => {
+				ev.preventDefault();
+				const name = paramNameInput.value.trim();
+				if(!name) return;
+				addParameter(name);
+				paramNameInput.value = '';
+				renderParams();
+				renderChart();
+				});
+
+				entryForm.addEventListener('submit', (ev) => {
+				ev.preventDefault();
+				const paramId = entryParam.value;
+				const paramName = entryParam.selectedOptions[0].text;
+				const period = entryForm.period.value;
+				const rating = ratingInput.value;
+				const comment = commentInput.value.trim();
+				const date = formatDate(new Date());
+				saveEntry({date, period, parameterId: paramId, parameterName: paramName, rating, comment});
+				ratingInput.value = 7; ratingValue.textContent = '7'; commentInput.value = '';
+				renderEntries(date); renderChart();
+				});
+
+				ratingInput.addEventListener('input', () => { ratingValue.textContent = ratingInput.value; });
+
+				// Chart logic
+				let chart = null;
+				function computeWeeklyData(paramId){
+				const dates = lastNDates(7);
+				const entries = getEntries().filter(e => e.parameterId === paramId);
+				const data = dates.map(d => {
+					const forDay = entries.filter(x => x.date === d);
+					if(forDay.length === 0) return null;
+					const avg = forDay.reduce((s,x) => s + x.rating, 0) / forDay.length;
+					return Number(avg.toFixed(2));
+				});
+				return { labels: dates, data };
+				}
+
+				function renderChart(){
+				const selected = chartParam.value || (chartParam.options[0] && chartParam.options[0].value);
+				if(!selected) return;
+				const dataset = computeWeeklyData(selected);
+				const ctx = document.getElementById('weeklyChart').getContext('2d');
+				if(chart) chart.destroy();
+				chart = new Chart(ctx, {
+					type: 'line',
+					data: {
+					labels: dataset.labels,
+					datasets: [{
+						label: chartParam.selectedOptions[0]?.text || 'Parameter',
+						data: dataset.data,
+						spanGaps: true,
+						fill: false,
+						tension: 0.3,
+						borderWidth: 2
+					}]
+					},
+					options: {
+					scales: { y: { suggestedMin: 0, suggestedMax: 10 } },
+					plugins: { legend: { display: true } }
+					}
+				});
+				}
+
+				chartParam.addEventListener('change', () => renderChart());
+
+				// initialize
+				currentDateSpan.textContent = new Date().toLocaleDateString();
+				renderParams();
+				renderEntries();
+				renderChart();
+			});
 		</script>
 	</body>
 </html>
