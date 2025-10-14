@@ -26,5 +26,78 @@ import "../styles/global.css";
 				color:var(--muted">reveal the hidden patterns of your day</div>
 			</div>
 		</header>
+
+		<main>
+			<!-- PARAMETERS -->
+			<section class="card">
+				<h2>Parameters</h2>
+				<div class="muted" style="margin-bottom: 8px;">Add parameters you want to track.</div>
+				<ul id="paramsList"></ul>
+
+				<form id="addParamForm">
+					<input
+						id="paramInput"
+						type="text"
+						placeholder="New parameter (e.g., Mood)"
+						required
+					/>
+					<button type="submit" style="margin-top: 6px;">Add Parameter</button>
+			</section>
+
+			<!-- ENTRIES -->
+			<section class="card">
+				<h2>Record entry - <span id="currentDate" class="muted"></span></h2>
+
+				<form id="entryForm">
+					<label class="muted">Parameter</label>
+					<select id="entryParam"></select>
+
+					<div class="period">
+						<label>
+							<input
+								type="radio"
+								name="period"
+								value="morning"
+								checked
+							/>
+							Morning
+						</label>
+						<label>
+							<input 
+								type="radio" 
+								name="period" 
+								value="afternoon" 
+							/>
+							Afternoon
+						</label>
+					</div>
+
+					<label class="muted">Rating: <span id="ratingValue">7</span></label>
+					<input
+						id="rating"
+						type="range"
+						min="0"
+						max="10"
+						step="0.1"
+						value="7"
+					/>
+
+					<div style="
+						display: flex;
+						gap: 10px;
+						justify-content: space-between;
+						align-items: center;"
+					>
+						<button type="submit" style="margin-top: 10px;">Add Entry</button>
+						<div class="muted" style="font-size: 13px;">Quick flow - 2 clicks & done</div>
+					</div>
+
+					<div id="entryFields"></div>
+				</form>
+
+				<h3 style="margin-top: 12px;">Today's entries</h3>
+				<ul id="entriesList" style="margin-top: 8px;"></ul>
+			</section>
+		</main>
 	</body>
 </html>
