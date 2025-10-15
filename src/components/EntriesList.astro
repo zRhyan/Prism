@@ -1,0 +1,40 @@
+---
+import { getEntries } from "../scripts/storage.js";
+
+const entries = getEntries().sort(
+  (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+);
+---
+
+<div class="entries-box">
+  <h2>📖 All Entries</h2>
+  <table id="entries-table">
+    <thead>
+      <tr>
+        <th>Date</th>
+        <th>Parameter</th>
+        <th>Rating</th>
+        <th>Comment</th>
+      </tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+</div>
+
+<script>
+  import { getEntries } from "../scripts/storage.js";
+
+  const tbody = document.querySelector("#entries-table tbody");
+  const entries = getEntries();
+
+  entries.forEach(e => {
+    const row = document.createElement("tr");
+    row.innerHTML = `
+      <td>${new Date(e.date).toLocaleDateString()}</td>
+      <td>${e.parameterName}</td>
+      <td>${e.rating}</td>
+      <td>${e.comment || "—"}</td>
+    `;
+    tbody.appendChild(row);
+  });
+</script>
