@@ -132,6 +132,30 @@ max-height: 220px;
 main { grid-template-columns: 1fr; padding: 12px; }
 }
 
+/* --- Export and Reset button --- */
+.entries-actions {
+  margin-top: auto; /* pushes both buttons to bottom */
+  display: flex;
+  flex-direction: column;
+  gap: 10px; /* space between the two buttons */
+}
+
+/* --- Export data button --- */
+.export-btn {
+  border: 1px solid rgba(125, 211, 252, 0.35); /* accent with light transparency */
+  color: var(--accent);
+  background: transparent;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+}
+
+.export-btn:hover {
+  background: rgba(125, 211, 252, 0.06);  /* soft accent tint */
+  border-color: rgba(125, 211, 252, 0.55);
+}
+
 /* --- Reset button --- */
 .entries-box {
   display: flex;
@@ -141,7 +165,6 @@ main { grid-template-columns: 1fr; padding: 12px; }
 }
 
 .reset-btn {
-  margin-top: auto; /* pushes button to bottom */
   border: 1px solid rgba(255, 0, 0, 0.35);
   color: #ff6b6b;
   background: transparent;

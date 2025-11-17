@@ -20,8 +20,15 @@ const entries = getEntries().sort(
     <tbody></tbody>
   </table>
 
-   <!-- Reset button at bottom -->
-  <button id="reset-storage" class="reset-btn">Reset Storage</button>
+  <!-- Div necessária para deixar os dois botões na parte inferior do container. -->
+  <!-- O CSS dessa div empurra para baixo e coloca um em cada linha -->
+  <div class="entries-actions">
+    <!-- Export data button -->
+    <button id="export-storage" class="export-btn">Export Data</button>
+    <!-- Reset button at bottom -->
+    <button id="reset-storage" class="reset-btn">Reset Storage</button>
+  </div>
+
 
 </div>
 
@@ -49,4 +56,24 @@ const entries = getEntries().sort(
       location.reload();
     }
   };
+
+  // export data
+  document.getElementById("export-storage").onclick = () => {
+    const data = {}; 
+    for (const key of Object.keys(localStorage)) {
+      try {
+        data[key] = JSON.parse(localStorage.getItem(key));
+      } catch {
+        data[key] = localStorage.getItem(key);
+      }
+    }
+
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "prism-data.json";
+    a.click();
+  };
+
 </script>
