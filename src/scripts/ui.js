@@ -6,6 +6,7 @@ import {
   getEntries,
   saveEntry,
   deleteEntry,
+  resetStorage
 } from "./storage.js";
 import { renderChart } from "./chart.js";
 
@@ -125,4 +126,15 @@ export function setupUI() {
   renderParams();
   renderEntries();
   renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+
+  const resetBtn = document.getElementById("reset-storage");
+  if (resetBtn) {
+    resetBtn.addEventListener("click", () => {
+      if (confirm("This will delete ALL data. Continue?")) {
+        resetStorage();
+        location.reload();
+      }
+    });
+  }
+
 }

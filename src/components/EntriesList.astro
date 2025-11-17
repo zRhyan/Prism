@@ -19,10 +19,14 @@ const entries = getEntries().sort(
     </thead>
     <tbody></tbody>
   </table>
+
+   <!-- Reset button at bottom -->
+  <button id="reset-storage" class="reset-btn">Reset Storage</button>
+
 </div>
 
 <script>
-  import { getEntries } from "../scripts/storage.js";
+  import { getEntries, resetAll } from "../scripts/storage.js";
 
   const tbody = document.querySelector("#entries-table tbody");
   const entries = getEntries();
@@ -37,4 +41,12 @@ const entries = getEntries().sort(
     `;
     tbody.appendChild(row);
   });
+
+  // reset storage
+  document.getElementById("reset-storage").onclick = () => {
+    if (confirm("Delete ALL parameters and entries? This cannot be undone.")) {
+      resetAll();
+      location.reload();
+    }
+  };
 </script>

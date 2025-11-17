@@ -66,3 +66,9 @@ export function deleteEntry(id) {
   let entries = getEntries().filter((e) => e.id !== id);
   saveEntries(entries);
 }
+
+// For resetting storage
+export function resetStorage() {
+  localStorage.removeItem('prism:parameters');
+  localStorage.removeItem('prism:entries');
+}
