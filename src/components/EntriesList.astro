@@ -34,7 +34,8 @@ const entries = getEntries().sort(
 </div>
 
 <script>
-  import { getEntries, resetAll } from "../scripts/storage.js";
+  // CORREÇÃO: Importar 'resetStorage' em vez de 'resetAll'
+  import { getEntries, resetStorage } from "../scripts/storage.js";
 
   const tbody = document.querySelector("#entries-table tbody");
   const entries = getEntries();
@@ -53,7 +54,7 @@ const entries = getEntries().sort(
   // reset storage
   document.getElementById("reset-storage").onclick = () => {
     if (confirm("Delete ALL parameters and entries? This cannot be undone.")) {
-      resetAll();
+      resetStorage(); // CORREÇÃO: Chamada da função correta
       location.reload();
     }
   };
@@ -76,5 +77,4 @@ const entries = getEntries().sort(
     a.download = "prism-data.json";
     a.click();
   };
-
 </script>
