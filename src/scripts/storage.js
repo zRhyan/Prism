@@ -17,10 +17,11 @@ const writeJSON = (key, obj) => localStorage.setItem(key, JSON.stringify(obj));
 export function getParameters() {
   let p = readJSON(LS_PARAMS, []);
   if (!p || p.length === 0) {
+    // AQUI ESTÁ A MÁGICA: Definimos o padrão para o seu Radar de Alta Performance
     p = [
-      { id: 'p_sleep', name: 'Sleep' },
-      { id: 'p_study', name: 'Study' },
-      { id: 'p_ex', name: 'Exercise' },
+      { id: 'p_latency', name: 'Latência de Início (min)' },
+      { id: 'p_screentime', name: 'Screentime Matinal (min)' },
+      { id: 'p_sleep_delta', name: 'Delta Sono (min)' }, // Ex: +30 (acordou tarde), -10 (cedo)
     ];
     writeJSON(LS_PARAMS, p);
   }

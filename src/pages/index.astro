@@ -75,14 +75,15 @@ import EntriesList from "../components/EntriesList.astro";
 						</label>
 					</div>
 
-					<label class="muted">Rating: <span id="ratingValue">7</span></label>
+					<label class="muted">Value (Minutes/Rating):</label>
 					<input
 						id="rating"
-						type="range"
-						min="0"
-						max="10"
-						step="0.1"
-						value="7"
+						type="number" 
+						inputmode="decimal"
+						placeholder="e.g. 15 (minutes) or 8.5 (rating)"
+						step="any"
+						required
+						style="font-size: 1.2rem; padding: 10px;"
 					/>
 
 					<textarea id="comment" placeholder="Optional comment..."></textarea>

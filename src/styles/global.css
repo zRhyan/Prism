@@ -1,4 +1,6 @@
- /* ---------- Tema / variáveis globais ---------- */
+/* // src/syles/global.css */
+ 
+/* ---------- Tema / variáveis globais ---------- */
 :root{
 /* Variáveis reutilizáveis do tema (cores, 'vidro' etc) */
 --bg: #0f1720;              /* cor de fundo geral (não usada diretamente, mas útil) */

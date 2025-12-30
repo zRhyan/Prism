@@ -20,21 +20,31 @@ export function setupUI() {
   const entryForm = document.getElementById("entryForm");
   const currentDateSpan = document.getElementById("currentDate");
   const ratingInput = document.getElementById("rating");
-  const ratingValue = document.getElementById("ratingValue");
   const commentInput = document.getElementById("comment");
+  
+  // Removido: ratingValue (não existe mais no DOM)
 
   const formatDate = (d) => d.toISOString().slice(0, 10);
   const date = formatDate(new Date());
-  currentDateSpan.textContent = new Date().toLocaleDateString();
+  
+  if(currentDateSpan) {
+      currentDateSpan.textContent = new Date().toLocaleDateString();
+  }
 
   function renderParams() {
     const params = getParameters();
     paramsList.innerHTML = "";
     entryParam.innerHTML = "";
     chartParam.innerHTML = "";
+
+    // Se não houver parâmetros, evita erros
+    if (params.length === 0) return;
+
     for (const p of params) {
+      // 1. Lista de parâmetros (com botão deletar)
       const li = document.createElement("li");
       li.textContent = p.name;
+      
       const del = document.createElement("button");
       del.textContent = "✕";
       del.className = "btn-del";
@@ -43,17 +53,22 @@ export function setupUI() {
           removeParameter(p.id);
           renderParams();
           renderEntries();
-          renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+          // Verifica se ainda existem opções antes de renderizar gráfico
+          if (chartParam.options.length > 0) {
+             renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+          }
         }
       };
       li.appendChild(del);
       paramsList.appendChild(li);
 
+      // 2. Select do Formulário
       const opt = document.createElement("option");
       opt.value = p.id;
       opt.textContent = p.name;
       entryParam.appendChild(opt);
 
+      // 3. Select do Gráfico
       const opt2 = document.createElement("option");
       opt2.value = p.id;
       opt2.textContent = p.name;
@@ -64,16 +79,30 @@ export function setupUI() {
   function renderEntries(date = formatDate(new Date())) {
     entriesList.innerHTML = "";
     const entries = getEntries().filter((e) => e.date === date);
+    
     if (entries.length === 0) {
       entriesList.innerHTML = '<li class="muted">No entries for today</li>';
       return;
     }
+
+    // Ordena por horário de criação (assumindo que novos ficam embaixo) ou alfabético
+    // Mantive sua lógica original alfabética, mas para logs diários, 
+    // cronológico reverso costuma ser melhor. Deixei como estava.
     entries.sort((a, b) => a.parameterName.localeCompare(b.parameterName));
+
     for (const e of entries) {
       const li = document.createElement("li");
       li.className = "entry-item";
-      li.innerHTML = `<div><strong>${e.parameterName}</strong> <em style="color:var(--muted)">(${e.period})</em> — ${e.rating}
-                      <div class="comment">${e.comment || ""}</div></div>`;
+      
+      // Ajuste visual: Mostra "min" se for um número alto, ou só o valor
+      li.innerHTML = `
+        <div>
+            <strong>${e.parameterName}</strong> 
+            <em style="color:var(--muted)">(${e.period})</em> — 
+            <span style="color:var(--accent)">${e.rating}</span>
+            <div class="comment">${e.comment || ""}</div>
+        </div>`;
+      
       const del = document.createElement("button");
       del.textContent = "Delete";
       del.className = "btn-sm";
@@ -81,13 +110,17 @@ export function setupUI() {
         if (confirm("Delete entry?")) {
           deleteEntry(e.id);
           renderEntries(date);
-          renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+          if (chartParam.options.length > 0) {
+            renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+          }
         }
       };
       li.appendChild(del);
       entriesList.appendChild(li);
     }
   }
+
+  // --- Event Listeners ---
 
   addParamForm.addEventListener("submit", (ev) => {
     ev.preventDefault();
@@ -100,22 +133,29 @@ export function setupUI() {
 
   entryForm.addEventListener("submit", (ev) => {
     ev.preventDefault();
+    
     const paramId = entryParam.value;
+    // Proteção contra envio sem parâmetros definidos
+    if (!paramId) return; 
+
     const paramName = entryParam.selectedOptions[0].text;
     const period = entryForm.period.value;
     const rating = ratingInput.value;
     const comment = commentInput.value.trim();
+
+    if (!rating) return; // Não salva vazio
+
     saveEntry({ date, period, parameterId: paramId, parameterName: paramName, rating, comment });
-    ratingInput.value = 7;
-    ratingValue.textContent = "7";
+    
+    // RESET DO FORMULÁRIO (Adaptado para Input Numérico)
+    ratingInput.value = ""; // Limpa o campo
     commentInput.value = "";
+    
     renderEntries(date);
     renderChart(paramId, paramName);
   });
 
-  ratingInput.addEventListener("input", () => {
-    ratingValue.textContent = ratingInput.value;
-  });
+  // Removido o listener de 'input' do ratingInput pois não há mais display visual
 
   chartParam.addEventListener("change", () => {
     const id = chartParam.value;
@@ -123,10 +163,16 @@ export function setupUI() {
     renderChart(id, name);
   });
 
+  // --- Inicialização ---
   renderParams();
   renderEntries();
-  renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+  
+  // Renderiza gráfico inicial se houver parâmetros
+  if (chartParam.options.length > 0) {
+      renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+  }
 
+  // Reset Button
   const resetBtn = document.getElementById("reset-storage");
   if (resetBtn) {
     resetBtn.addEventListener("click", () => {
@@ -136,5 +182,4 @@ export function setupUI() {
       }
     });
   }
-
 }
