@@ -106,6 +106,30 @@ import EntriesList from "../components/EntriesList.astro";
 			</section>
 
 			<!-- ALL ENTRIES AND RESET STORAGE-->
+			<!-- GOALS -->
+			<section class="card">
+				<h2>Weekly Goals</h2>
+				<div class="muted" style="margin-bottom: 8px;">
+					Targets per parameter. Progress resets every Monday.
+				</div>
+				<ul id="goalsList"></ul>
+				<form id="goalForm" style="margin-top: 10px;">
+					<label class="muted">Parameter</label>
+					<select id="goalParam"></select>
+
+					<label class="muted" style="margin-top:8px;">
+					Target weekly avg: <span id="goalTargetValue">7</span>
+					</label>
+					<input id="goalTarget" type="range" min="0" max="10" step="0.1" value="7" />
+
+					<label class="muted" style="margin-top:8px;">
+					Target sessions/week: <span id="goalSessionsValue">5</span>
+					</label>
+					<input id="goalSessions" type="range" min="1" max="20" step="1" value="5" />
+
+					<button type="submit" style="margin-top: 10px;">Set Goal</button>
+				</form>
+			</section>
 			<EntriesList />
 
 		</main>

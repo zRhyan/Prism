@@ -1,10 +1,7 @@
 ---
 // src/components/EntriesList.astro
-import { getEntries } from "../scripts/storage.js";
-
-const entries = getEntries().sort(
-  (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-);
+// NOTA: o frontmatter roda no servidor (Node.js) — localStorage não existe aqui.
+// A tabela é populada inteiramente pelo <script> client-side abaixo.
 ---
 
 <div class="entries-box">
@@ -14,6 +11,7 @@ const entries = getEntries().sort(
       <tr>
         <th>Date</th>
         <th>Parameter</th>
+        <th>Period</th>
         <th>Rating</th>
         <th>Comment</th>
       </tr>
@@ -21,47 +19,51 @@ const entries = getEntries().sort(
     <tbody></tbody>
   </table>
 
-  <!-- Div necessária para deixar os dois botões na parte inferior do container. -->
-  <!-- O CSS dessa div empurra para baixo e coloca um em cada linha -->
   <div class="entries-actions">
-    <!-- Export data button -->
     <button id="export-storage" class="export-btn">Export Data</button>
-    <!-- Reset button at bottom -->
+    <button id="export-csv" class="export-btn">Export CSV</button>
     <button id="reset-storage" class="reset-btn">Reset Storage</button>
   </div>
-
-
 </div>
 
 <script>
-  // CORREÇÃO: Importar 'resetStorage' em vez de 'resetAll'
-  import { getEntries, resetStorage } from "../scripts/storage.js";
+  import { getEntries, resetStorage, localDateStr } from "../scripts/storage.js";
 
-  const tbody = document.querySelector("#entries-table tbody");
-  const entries = getEntries();
 
-  entries.forEach(e => {
+  const tbody  = document.querySelector("#entries-table tbody");
+  const entries = getEntries().sort(
+    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
+  );
+
+  entries.forEach((e) => {
+    // e.date é "YYYY-MM-DD". Fazer new Date("YYYY-MM-DD") interpreta como UTC
+    // midnight, causando shift de -1 dia em UTC-3.
+    // Solução: construir a data com os componentes locais explícitos.
+    const [year, month, day] = e.date.split("-").map(Number);
+    const localDate = new Date(year, month - 1, day);
+
     const row = document.createElement("tr");
     row.innerHTML = `
-      <td>${new Date(e.date).toLocaleDateString()}</td>
+      <td>${localDate.toLocaleDateString()}</td>
       <td>${e.parameterName}</td>
+      <td>${e.period}</td>
       <td>${e.rating}</td>
       <td>${e.comment || "—"}</td>
     `;
     tbody.appendChild(row);
   });
 
-  // reset storage
+  // Reset
   document.getElementById("reset-storage").onclick = () => {
     if (confirm("Delete ALL parameters and entries? This cannot be undone.")) {
-      resetStorage(); // CORREÇÃO: Chamada da função correta
+      resetStorage(); // nome correto da função exportada em storage.js
       location.reload();
     }
   };
 
-  // export data
+  // Export
   document.getElementById("export-storage").onclick = () => {
-    const data = {}; 
+    const data = {};
     for (const key of Object.keys(localStorage)) {
       try {
         data[key] = JSON.parse(localStorage.getItem(key));
@@ -69,12 +71,37 @@ const entries = getEntries().sort(
         data[key] = localStorage.getItem(key);
       }
     }
-
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement("a");
+    a.href     = url;
     a.download = "prism-data.json";
     a.click();
+    URL.revokeObjectURL(url); // libera memória após download
+  };
+
+  document.getElementById('export-csv').onclick = () => {
+    const entries = getEntries();
+    const header  = ['id', 'date', 'period', 'parameter', 'rating', 'comment', 'createdAt'].join(',');
+    const rows    = entries
+      .sort((a, b) => a.date.localeCompare(b.date))
+      .map(e => [
+        e.id,
+        e.date,
+        e.period,
+        `"${(e.parameterName || '').replace(/"/g, '""')}"`,
+        e.rating,
+        `"${(e.comment    || '').replace(/"/g, '""')}"`,
+        e.createdAt,
+      ].join(','));
+
+    const csv  = [header, ...rows].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url  = URL.createObjectURL(blob);
+    const a    = document.createElement('a');
+    a.href     = url;
+    a.download = `prism-${localDateStr(new Date())}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
   };
 </script>
