@@ -31,9 +31,16 @@
 
 
   const tbody  = document.querySelector("#entries-table tbody");
-  const entries = getEntries().sort(
-    (a, b) => new Date(b.createdAt) - new Date(a.createdAt)
-  );
+  // Antes: sort só por createdAt — quebra se dados forem reimportados
+  // Depois: chave composta date → period → createdAt (ordem cronológica real)
+  const entries = getEntries().sort((a, b) => {
+    if (b.date   !== a.date)   return b.date.localeCompare(a.date);
+    const periodOrder = { morning: 0, afternoon: 1 };
+    const pa = periodOrder[a.period] ?? 2;
+    const pb = periodOrder[b.period] ?? 2;
+    if (pb !== pa) return pb - pa;
+    return new Date(b.createdAt) - new Date(a.createdAt);
+  });
 
   entries.forEach((e) => {
     // e.date é "YYYY-MM-DD". Fazer new Date("YYYY-MM-DD") interpreta como UTC

@@ -4,37 +4,51 @@ import {
   getEntries, saveEntry, deleteEntry, resetStorage,
   getGoals, setGoal, removeGoal,
   resolveParamName, localDateStr,
-} from "./storage.js";
-import { renderChart } from "./chart.js";
+  getSnapshots,
+} from './storage.js';
+import { renderChart } from './chart.js';
 
 const getTodayDate = () => localDateStr(new Date());
 
-// Segunda-feira da semana atual como "YYYY-MM-DD".
-// Comparação de progresso usa string >= string — válido para ISO dates.
 const getWeekStart = () => {
   const today = new Date();
-  const day   = today.getDay(); // 0 = Dom
+  const day   = today.getDay();
   const diff  = day === 0 ? -6 : 1 - day;
   return localDateStr(
     new Date(today.getFullYear(), today.getMonth(), today.getDate() + diff)
   );
 };
 
-export function setupUI() {
-  // --- DOM refs: entries ---
-  const paramsList       = document.getElementById('paramsList');
-  const addParamForm     = document.getElementById('addParamForm');
-  const paramNameInput   = document.getElementById('paramName');
-  const entryParam       = document.getElementById('entryParam');
-  const chartParam       = document.getElementById('chartParam');
-  const entriesList      = document.getElementById('entriesList');
-  const entryForm        = document.getElementById('entryForm');
-  const currentDateSpan  = document.getElementById('currentDate');
-  const ratingInput      = document.getElementById('rating');
-  const ratingValue      = document.getElementById('ratingValue');
-  const commentInput     = document.getElementById('comment');
+const el = (tag, props = {}, ...children) => {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'className')       node.className = v;
+    else if (k === 'style')      Object.assign(node.style, v);
+    else if (k.startsWith('on')) node.addEventListener(k.slice(2).toLowerCase(), v);
+    else                         node.setAttribute(k, v);
+  }
+  for (const child of children) {
+    if (child == null) continue;
+    node.appendChild(
+      typeof child === 'string' ? document.createTextNode(child) : child
+    );
+  }
+  return node;
+};
 
-  // --- DOM refs: goals ---
+export function setupUI() {
+  // --- DOM refs ---
+  const paramsList        = document.getElementById('paramsList');
+  const addParamForm      = document.getElementById('addParamForm');
+  const paramNameInput    = document.getElementById('paramName');
+  const entryParam        = document.getElementById('entryParam');
+  const chartParam        = document.getElementById('chartParam');
+  const entriesList       = document.getElementById('entriesList');
+  const entryForm         = document.getElementById('entryForm');
+  const currentDateSpan   = document.getElementById('currentDate');
+  const ratingInput       = document.getElementById('rating');
+  const ratingValue       = document.getElementById('ratingValue');
+  const commentInput      = document.getElementById('comment');
   const goalsList         = document.getElementById('goalsList');
   const goalForm          = document.getElementById('goalForm');
   const goalParamSelect   = document.getElementById('goalParam');
@@ -42,23 +56,24 @@ export function setupUI() {
   const goalTargetValue   = document.getElementById('goalTargetValue');
   const goalSessionsInput = document.getElementById('goalSessions');
   const goalSessionsValue = document.getElementById('goalSessionsValue');
+  const weeklyHistoryDiv  = document.getElementById('weeklyHistory');
 
   currentDateSpan.textContent = new Date().toLocaleDateString();
 
+  window.addEventListener('prism:quotaExceeded', () => {
+    alert('[Prism] Storage limit reached. Export your data and clear old entries.');
+  });
+
   // --- Parameters ---
   function renderParams() {
-    const params = getParameters();
-    paramsList.innerHTML  = '';
-    entryParam.innerHTML  = '';
-    chartParam.innerHTML  = '';
+    paramsList.innerHTML = '';
+    entryParam.innerHTML = '';
+    chartParam.innerHTML = '';
     if (goalParamSelect) goalParamSelect.innerHTML = '';
 
-    for (const p of params) {
-      const li = document.createElement('li');
-      li.textContent = p.name;
-      const del = document.createElement('button');
-      del.textContent = '✕';
-      del.className   = 'btn-del';
+    for (const p of getParameters()) {
+      const li  = el('li');
+      const del = el('button', { className: 'btn-del' }, '✕');
       del.onclick = () => {
         if (confirm(`Remove parameter "${p.name}"?`)) {
           removeParameter(p.id);
@@ -68,16 +83,12 @@ export function setupUI() {
           renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
         }
       };
+      li.appendChild(document.createTextNode(p.name));
       li.appendChild(del);
       paramsList.appendChild(li);
 
-      // Popula os três selects de uma vez
-      const targets = [entryParam, chartParam, goalParamSelect].filter(Boolean);
-      for (const sel of targets) {
-        const opt = document.createElement('option');
-        opt.value = p.id;
-        opt.textContent = p.name;
-        sel.appendChild(opt);
+      for (const sel of [entryParam, chartParam, goalParamSelect].filter(Boolean)) {
+        sel.appendChild(el('option', { value: p.id }, p.name));
       }
     }
   }
@@ -95,30 +106,29 @@ export function setupUI() {
     entries.sort((a, b) => a.parameterName.localeCompare(b.parameterName));
 
     for (const e of entries) {
-      // Desnormalization fix: usa nome atual do parâmetro; cai no nome armazenado
-      // se o parâmetro foi deletado
       const displayName = resolveParamName(e.parameterId, e.parameterName);
+      const nameStrong  = el('strong', {}, displayName);
+      const periodEm    = el('em', { style: { color: 'var(--muted)' } }, `(${e.period})`);
+      const commentDiv  = el('div', { className: 'comment' }, e.comment || '');
+      const infoDiv     = el('div', {});
+      infoDiv.appendChild(nameStrong);
+      infoDiv.appendChild(document.createTextNode(' '));
+      infoDiv.appendChild(periodEm);
+      infoDiv.appendChild(document.createTextNode(` — ${e.rating}`));
+      infoDiv.appendChild(commentDiv);
 
-      const li = document.createElement('li');
-      li.className = 'entry-item';
-      li.innerHTML = `
-        <div>
-          <strong>${displayName}</strong>
-          <em style="color:var(--muted)">(${e.period})</em> — ${e.rating}
-          <div class="comment">${e.comment || ''}</div>
-        </div>`;
-
-      const del = document.createElement('button');
-      del.textContent = 'Delete';
-      del.className   = 'btn-sm';
+      const del = el('button', { className: 'btn-sm' }, 'Delete');
       del.onclick = () => {
         if (confirm('Delete entry?')) {
           deleteEntry(e.id);
-          renderEntries(date);
+          renderEntries(getTodayDate());
           renderGoals();
           renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
         }
       };
+
+      const li = el('li', { className: 'entry-item' });
+      li.appendChild(infoDiv);
       li.appendChild(del);
       entriesList.appendChild(li);
     }
@@ -139,47 +149,129 @@ export function setupUI() {
     }
 
     for (const [paramId, goal] of Object.entries(goals)) {
-      const paramName   = resolveParamName(paramId, paramId);
-      const weekEntries = entries.filter(
+      const paramName      = resolveParamName(paramId, paramId);
+      const weekEntries    = entries.filter(
         e => e.parameterId === paramId && e.date >= weekStart
       );
-      const sessions = weekEntries.length;
-      const avg      = sessions === 0
+      const uniqueSessions = new Set(
+        weekEntries.map(e => `${e.date}__${e.period}`)
+      ).size;
+      const avg = weekEntries.length === 0
         ? null
-        : Number((weekEntries.reduce((s, e) => s + e.rating, 0) / sessions).toFixed(2));
+        : Number((weekEntries.reduce((s, e) => s + e.rating, 0) / weekEntries.length).toFixed(2));
 
-      const avgOk  = avg !== null && avg  >= goal.targetWeeklyAvg;
-      const sessOk = sessions >= goal.targetSessions;
+      const avgOk  = avg  !== null && avg  >= goal.targetWeeklyAvg;
+      const sessOk = uniqueSessions >= goal.targetSessions;
+      const ok     = '#68d391';
+      const miss   = '#fc8181';
 
-      const okStyle   = 'color:#68d391;font-size:13px;margin-left:8px;';
-      const missStyle = 'color:#fc8181;font-size:13px;margin-left:8px;';
-
-      const li = document.createElement('li');
-      li.className = 'goal-item';
-      li.style.cssText = 'display:flex;align-items:center;gap:4px;padding:4px 0;';
-      li.innerHTML = `
-        <strong style="flex:1">${paramName}</strong>
-        <span style="${avgOk ? okStyle : missStyle}">
-          avg ${avg ?? '—'}/${goal.targetWeeklyAvg} ${avgOk ? '✓' : '✗'}
-        </span>
-        <span style="${sessOk ? okStyle : missStyle}">
-          sessions ${sessions}/${goal.targetSessions} ${sessOk ? '✓' : '✗'}
-        </span>
-        <button class="btn-del" data-param-id="${paramId}" style="margin-left:8px;">✕</button>
-      `;
-      goalsList.appendChild(li);
-    }
-
-    goalsList.querySelectorAll('[data-param-id]').forEach(btn => {
-      btn.onclick = () => {
-        removeGoal(btn.dataset.paramId);
+      const nameStrong = el('strong', { style: { flex: '1' } }, paramName);
+      const avgSpan    = el('span', {
+        style: { color: avgOk ? ok : miss, fontSize: '13px', marginLeft: '8px' },
+      }, `avg ${avg ?? '—'}/${goal.targetWeeklyAvg} ${avgOk ? '✓' : '✗'}`);
+      const sessSpan   = el('span', {
+        style: { color: sessOk ? ok : miss, fontSize: '13px', marginLeft: '8px' },
+      }, `sessions ${uniqueSessions}/${goal.targetSessions} ${sessOk ? '✓' : '✗'}`);
+      const delBtn     = el('button', { className: 'btn-del', style: { marginLeft: '8px' } }, '✕');
+      delBtn.onclick   = () => {
+        removeGoal(paramId);
         renderGoals();
         renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
       };
-    });
+
+      const li = el('li', { className: 'goal-item',
+        style: { display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 0' },
+      });
+      li.append(nameStrong, avgSpan, sessSpan, delBtn);
+      goalsList.appendChild(li);
+    }
   }
 
-  // --- Event listeners ---
+  // --- Weekly History ---
+  function renderWeeklyHistory() {
+    if (!weeklyHistoryDiv) return;
+    const snapshots = getSnapshots();
+    weeklyHistoryDiv.innerHTML = '';
+
+    if (snapshots.length === 0) {
+      weeklyHistoryDiv.appendChild(
+        el('p', { className: 'muted' }, 'No history yet. Snapshots are taken automatically every Monday.')
+      );
+      return;
+    }
+
+    for (const snap of snapshots) {
+      // Cabeçalho do card
+      const header = el('div', {
+        style: { display: 'flex', justifyContent: 'space-between', marginBottom: '6px' },
+      },
+        el('strong', {}, `${snap.weekStart} → ${snap.weekEnd}`),
+        el('span', { className: 'muted', style: { fontSize: '12px' } },
+          `saved ${new Date(snap.takenAt).toLocaleDateString()}`
+        )
+      );
+
+      // Tabela de rows
+      const table = el('table', { style: { width: '100%', fontSize: '13px', borderCollapse: 'collapse' } });
+      const thead = el('thead');
+      thead.appendChild(el('tr', {},
+        el('th', { style: { textAlign: 'left', paddingBottom: '4px' } }, 'Parameter'),
+        el('th', { style: { textAlign: 'right' } }, 'Avg'),
+        el('th', { style: { textAlign: 'right' } }, 'Sessions'),
+        el('th', { style: { textAlign: 'center' } }, 'Goals'),
+      ));
+      table.appendChild(thead);
+
+      const tbody = el('tbody');
+      for (const row of snap.rows) {
+        const avgDisplay  = row.avgRating    ?? '—';
+        const goalAvgTxt  = row.goalTargetWeeklyAvg !== null ? `/${row.goalTargetWeeklyAvg}` : '';
+        const goalSesTxt  = row.goalTargetSessions  !== null ? `/${row.goalTargetSessions}`  : '';
+
+        // Indicador de goals: ✓✓ ambos, ✓✗ só avg, etc. null se sem goal
+        let goalIndicator = '—';
+        if (row.avgMet !== null || row.sessionsMet !== null) {
+          const a = row.avgMet      === null ? '·' : row.avgMet      ? '✓' : '✗';
+          const s = row.sessionsMet === null ? '·' : row.sessionsMet ? '✓' : '✗';
+          const aColor = row.avgMet      ? '#68d391' : '#fc8181';
+          const sColor = row.sessionsMet ? '#68d391' : '#fc8181';
+          const aSpan  = el('span', { style: { color: aColor } }, `avg${a}`);
+          const sSpan  = el('span', { style: { color: sColor, marginLeft: '6px' } }, `ses${s}`);
+          goalIndicator = el('span', {});
+          goalIndicator.append(aSpan, sSpan);
+        }
+
+        const tr = el('tr', { style: { borderTop: '1px solid var(--border, #333)' } },
+          el('td', { style: { padding: '3px 0' } }, row.parameterName),
+          el('td', { style: { textAlign: 'right' } }, `${avgDisplay}${goalAvgTxt}`),
+          el('td', { style: { textAlign: 'right' } }, `${row.uniqueSessions}${goalSesTxt}`),
+          el('td', { style: { textAlign: 'center' } }),
+        );
+        // Insere o goalIndicator (pode ser string ou nó DOM)
+        tr.cells[3].appendChild(
+          typeof goalIndicator === 'string'
+            ? document.createTextNode(goalIndicator)
+            : goalIndicator
+        );
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+
+      const card = el('div', {
+        style: {
+          border:       '1px solid var(--border, #333)',
+          borderRadius: '6px',
+          padding:      '10px',
+          marginBottom: '10px',
+        },
+      });
+      card.appendChild(header);
+      card.appendChild(table);
+      weeklyHistoryDiv.appendChild(card);
+    }
+  }
+
+  // --- Events ---
   addParamForm.addEventListener('submit', (ev) => {
     ev.preventDefault();
     const name = paramNameInput.value.trim();
@@ -189,8 +281,12 @@ export function setupUI() {
     renderParams();
   });
 
+  let isSubmitting = false;
   entryForm.addEventListener('submit', (ev) => {
     ev.preventDefault();
+    if (isSubmitting) return;
+    isSubmitting = true;
+
     const today     = getTodayDate();
     const paramId   = entryParam.value;
     const paramName = entryParam.selectedOptions[0].text;
@@ -207,6 +303,8 @@ export function setupUI() {
     renderEntries(today);
     renderGoals();
     renderChart(paramId, paramName);
+
+    setTimeout(() => { isSubmitting = false; }, 300);
   });
 
   ratingInput.addEventListener('input', () => {
@@ -241,6 +339,7 @@ export function setupUI() {
   renderParams();
   renderEntries();
   renderGoals();
+  renderWeeklyHistory();
   renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
 
   const resetBtn = document.getElementById('reset-storage');
@@ -252,4 +351,16 @@ export function setupUI() {
       }
     });
   }
+
+  // Expõe refresh para main.js acionar re-render após virada de semana
+  function refresh() {
+    currentDateSpan.textContent = new Date().toLocaleDateString();
+    renderParams();
+    renderEntries();
+    renderGoals();
+    renderWeeklyHistory();
+    renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+  }
+
+  return { refresh };
 }
