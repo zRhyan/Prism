@@ -1,23 +1,24 @@
 // src/scripts/main.js
 import { setupUI } from './ui.js';
 import {
-  localDateStr,
+  localDateStr, getWeekStart,
   getEntries, getGoals,
-  saveWeekSnapshot,
-  getLastSnapshotWeek, setLastSnapshotWeek,
+  saveWeekSnapshot, saveMonthSnapshot, saveYearSnapshot,
+  getLastSnapshotWeek,  setLastSnapshotWeek,
+  getLastSnapshotMonth, setLastSnapshotMonth,
+  getLastSnapshotYear,  setLastSnapshotYear,
 } from './storage.js';
 
-// Duplicada aqui intencionalmente: main.js não deve depender de ui.js
-// para uma função utilitária pura de data.
-const getWeekStart = (d = new Date()) => {
-  const day  = d.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  return localDateStr(
-    new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff)
-  );
-};
+// getWeekStart agora vem de storage — sem duplicata local
 
-// Calcula os bounds da semana anterior a partir do weekStart atual.
+const getMonthStart = (d = new Date()) =>
+  localDateStr(new Date(d.getFullYear(), d.getMonth(), 1));
+
+const getYearStart = (d = new Date()) =>
+  `${d.getFullYear()}-01-01`;
+
+// ─── Bounds helpers ────────────────────────────────────────────────────────────
+
 const getPrevWeekBounds = (currentWeekStart) => {
   const [y, m, d] = currentWeekStart.split('-').map(Number);
   return {
@@ -26,47 +27,79 @@ const getPrevWeekBounds = (currentWeekStart) => {
   };
 };
 
-// Verifica se a semana virou desde o último snapshot.
-// Retorna true se um novo snapshot foi tirado (sinaliza que a UI deve re-renderizar).
+// currentMonthStart = "YYYY-MM-01"
+// new Date(y, m-2, 1)  = first day of previous month (JS 0-indexed months handle underflow)
+// new Date(y, m-1, 0)  = day 0 of current month = last day of previous month
+const getPrevMonthBounds = (currentMonthStart) => {
+  const [y, m] = currentMonthStart.split('-').map(Number);
+  return {
+    monthStart: localDateStr(new Date(y, m - 2, 1)),
+    monthEnd:   localDateStr(new Date(y, m - 1, 0)),
+  };
+};
+
+const getPrevYearBounds = (currentYearStart) => {
+  const y = Number(currentYearStart.split('-')[0]);
+  return {
+    yearStart: `${y - 1}-01-01`,
+    yearEnd:   `${y - 1}-12-31`,
+  };
+};
+
+// ─── Snapshot checks ───────────────────────────────────────────────────────────
+
 function maybeSnapshotPreviousWeek() {
-  const currentWeekStart = getWeekStart();
-  const lastSnapshotWeek = getLastSnapshotWeek();
-
-  // Primeira execução: registra a semana atual como baseline, sem snapshot.
-  if (lastSnapshotWeek === null) {
-    setLastSnapshotWeek(currentWeekStart);
-    return false;
-  }
-
-  // Semana ainda não virou.
-  if (lastSnapshotWeek >= currentWeekStart) return false;
-
-  // Semana virou: tira snapshot da semana anterior e avança o ponteiro.
-  const { weekStart, weekEnd } = getPrevWeekBounds(currentWeekStart);
-  saveWeekSnapshot({
-    weekStart,
-    weekEnd,
-    entries: getEntries(),
-    goals:   getGoals(),
-  });
-  setLastSnapshotWeek(currentWeekStart);
+  const current = getWeekStart();
+  const last    = getLastSnapshotWeek();
+  if (last === null)    { setLastSnapshotWeek(current); return false; }
+  if (last >= current)    return false;
+  const { weekStart, weekEnd } = getPrevWeekBounds(current);
+  saveWeekSnapshot({ weekStart, weekEnd, entries: getEntries(), goals: getGoals() });
+  setLastSnapshotWeek(current);
   return true;
 }
 
+function maybeSnapshotPreviousMonth() {
+  const current = getMonthStart();
+  const last    = getLastSnapshotMonth();
+  if (last === null)    { setLastSnapshotMonth(current); return false; }
+  if (last >= current)    return false;
+  const { monthStart, monthEnd } = getPrevMonthBounds(current);
+  saveMonthSnapshot({ monthStart, monthEnd, entries: getEntries(), goals: getGoals() });
+  setLastSnapshotMonth(current);
+  return true;
+}
+
+function maybeSnapshotPreviousYear() {
+  const current = getYearStart();
+  const last    = getLastSnapshotYear();
+  if (last === null)    { setLastSnapshotYear(current); return false; }
+  if (last >= current)    return false;
+  const { yearStart, yearEnd } = getPrevYearBounds(current);
+  saveYearSnapshot({ yearStart, yearEnd, entries: getEntries(), goals: getGoals() });
+  setLastSnapshotYear(current);
+  return true;
+}
+
+// Runs all three — assigns to separate variables so no short-circuit skips any check
+function checkAllSnapshots() {
+  const w = maybeSnapshotPreviousWeek();
+  const m = maybeSnapshotPreviousMonth();
+  const y = maybeSnapshotPreviousYear();
+  return w || m || y;
+}
+
+// ─── Boot ──────────────────────────────────────────────────────────────────────
+
 document.addEventListener('DOMContentLoaded', () => {
-  // Checa virada de semana antes de montar a UI.
-  // Garante que o histórico está atualizado mesmo que o usuário
-  // tenha ficado sem abrir o app por semanas.
-  maybeSnapshotPreviousWeek();
+  // Snapshot check before UI mounts — catches gaps from weeks/months of inactivity
+  checkAllSnapshots();
 
   const { refresh } = setupUI();
 
-  // Quando o usuário volta para a aba (de outro app, do celular em background, etc.),
-  // re-verifica se a semana virou enquanto a aba estava inativa.
-  // Se virou, tira o snapshot e força re-render completo da UI.
+  // On tab resume: re-check in case week/month/year boundary crossed while hidden
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) return;
-    const snapshotTaken = maybeSnapshotPreviousWeek();
-    if (snapshotTaken) refresh();
+    if (checkAllSnapshots()) refresh();
   });
 });

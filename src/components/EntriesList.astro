@@ -1,11 +1,12 @@
 ---
 // src/components/EntriesList.astro
-// NOTA: o frontmatter roda no servidor (Node.js) — localStorage não existe aqui.
-// A tabela é populada inteiramente pelo <script> client-side abaixo.
+// Frontmatter runs on the server (Node.js) — no localStorage here.
+// Table is populated entirely by the client-side <script> below.
 ---
 
 <div class="entries-box">
   <h2>📖 All Entries</h2>
+
   <table id="entries-table">
     <thead>
       <tr>
@@ -13,6 +14,7 @@
         <th>Parameter</th>
         <th>Period</th>
         <th>Rating</th>
+        <th>Duration</th>
         <th>Comment</th>
       </tr>
     </thead>
@@ -20,87 +22,88 @@
   </table>
 
   <div class="entries-actions">
-    <button id="export-storage" class="export-btn">Export Data</button>
-    <button id="export-csv" class="export-btn">Export CSV</button>
-    <button id="reset-storage" class="reset-btn">Reset Storage</button>
+    <button id="export-storage" class="export-btn">Export JSON</button>
+    <button id="export-csv"     class="export-btn">Export CSV</button>
+    <button id="reset-storage"  class="reset-btn">Reset Storage</button>
   </div>
 </div>
 
 <script>
-  import { getEntries, resetStorage, localDateStr } from "../scripts/storage.js";
+  import { getEntries, resetStorage, localDateStr } from '../scripts/storage.js';
 
+  const tbody = document.querySelector('#entries-table tbody');
 
-  const tbody  = document.querySelector("#entries-table tbody");
-  // Antes: sort só por createdAt — quebra se dados forem reimportados
-  // Depois: chave composta date → period → createdAt (ordem cronológica real)
   const entries = getEntries().sort((a, b) => {
-    if (b.date   !== a.date)   return b.date.localeCompare(a.date);
-    const periodOrder = { morning: 0, afternoon: 1 };
-    const pa = periodOrder[a.period] ?? 2;
-    const pb = periodOrder[b.period] ?? 2;
+    if (b.date !== a.date) return b.date.localeCompare(a.date);
+    const order = { morning: 0, afternoon: 1 };
+    const pa = order[a.period] ?? 2;
+    const pb = order[b.period] ?? 2;
     if (pb !== pa) return pb - pa;
     return new Date(b.createdAt) - new Date(a.createdAt);
   });
 
+  // Fix: build rows via DOM to avoid XSS from user-supplied fields
   entries.forEach((e) => {
-    // e.date é "YYYY-MM-DD". Fazer new Date("YYYY-MM-DD") interpreta como UTC
-    // midnight, causando shift de -1 dia em UTC-3.
-    // Solução: construir a data com os componentes locais explícitos.
-    const [year, month, day] = e.date.split("-").map(Number);
+    const [year, month, day] = e.date.split('-').map(Number);
     const localDate = new Date(year, month - 1, day);
 
-    const row = document.createElement("tr");
-    row.innerHTML = `
-      <td>${localDate.toLocaleDateString()}</td>
-      <td>${e.parameterName}</td>
-      <td>${e.period}</td>
-      <td>${e.rating}</td>
-      <td>${e.comment || "—"}</td>
-    `;
-    tbody.appendChild(row);
+    const td = (text) => {
+      const cell = document.createElement('td');
+      cell.textContent = text;
+      return cell;
+    };
+
+    const tr = document.createElement('tr');
+    tr.appendChild(td(localDate.toLocaleDateString()));
+    tr.appendChild(td(e.parameterName || '—'));
+    tr.appendChild(td(e.period));
+    tr.appendChild(td(String(e.rating)));
+    tr.appendChild(td(e.duration != null ? `${e.duration} min` : '—'));
+    tr.appendChild(td(e.comment || '—'));
+    tbody.appendChild(tr);
   });
 
-  // Reset
-  document.getElementById("reset-storage").onclick = () => {
-    if (confirm("Delete ALL parameters and entries? This cannot be undone.")) {
-      resetStorage(); // nome correto da função exportada em storage.js
+  // ── Reset ────────────────────────────────────────────────────────────────────
+  document.getElementById('reset-storage').onclick = () => {
+    if (confirm('Delete ALL parameters and entries? This cannot be undone.')) {
+      resetStorage();
       location.reload();
     }
   };
 
-  // Export
-  document.getElementById("export-storage").onclick = () => {
+  // ── Export JSON ──────────────────────────────────────────────────────────────
+  document.getElementById('export-storage').onclick = () => {
     const data = {};
     for (const key of Object.keys(localStorage)) {
-      try {
-        data[key] = JSON.parse(localStorage.getItem(key));
-      } catch {
-        data[key] = localStorage.getItem(key);
-      }
+      try        { data[key] = JSON.parse(localStorage.getItem(key)); }
+      catch (_)  { data[key] = localStorage.getItem(key); }
     }
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url  = URL.createObjectURL(blob);
-    const a    = document.createElement("a");
+    const a    = document.createElement('a');
     a.href     = url;
-    a.download = "prism-data.json";
+    a.download = 'prism-data.json';
     a.click();
-    URL.revokeObjectURL(url); // libera memória após download
+    URL.revokeObjectURL(url);
   };
 
+  // ── Export CSV ───────────────────────────────────────────────────────────────
   document.getElementById('export-csv').onclick = () => {
-    const entries = getEntries();
-    const header  = ['id', 'date', 'period', 'parameter', 'rating', 'comment', 'createdAt'].join(',');
-    const rows    = entries
-      .sort((a, b) => a.date.localeCompare(b.date))
-      .map(e => [
-        e.id,
-        e.date,
-        e.period,
-        `"${(e.parameterName || '').replace(/"/g, '""')}"`,
-        e.rating,
-        `"${(e.comment    || '').replace(/"/g, '""')}"`,
-        e.createdAt,
-      ].join(','));
+    const csv_entries = getEntries().sort((a, b) => a.date.localeCompare(b.date));
+
+    const escape = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+
+    const header = ['id', 'date', 'period', 'parameter', 'rating', 'duration_min', 'comment', 'createdAt'].join(',');
+    const rows   = csv_entries.map(e => [
+      e.id,
+      e.date,
+      e.period,
+      escape(e.parameterName),
+      e.rating,
+      e.duration ?? '',     // empty string = not recorded, distinct from 0
+      escape(e.comment),
+      e.createdAt,
+    ].join(','));
 
     const csv  = [header, ...rows].join('\n');
     const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });

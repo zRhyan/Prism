@@ -3,21 +3,15 @@ import {
   getParameters, addParameter, removeParameter,
   getEntries, saveEntry, deleteEntry, resetStorage,
   getGoals, setGoal, removeGoal,
-  resolveParamName, localDateStr,
-  getSnapshots,
+  resolveParamName, localDateStr, getWeekStart,
+  setParameterThresholds,
+  getWeeklySnapshots, getMonthlySnapshots, getYearlySnapshots,
 } from './storage.js';
-import { renderChart } from './chart.js';
+import { renderChart, computeAverages } from './chart.js';
 
 const getTodayDate = () => localDateStr(new Date());
 
-const getWeekStart = () => {
-  const today = new Date();
-  const day   = today.getDay();
-  const diff  = day === 0 ? -6 : 1 - day;
-  return localDateStr(
-    new Date(today.getFullYear(), today.getMonth(), today.getDate() + diff)
-  );
-};
+// getWeekStart imported from storage — no local duplicate
 
 const el = (tag, props = {}, ...children) => {
   const node = document.createElement(tag);
@@ -37,26 +31,45 @@ const el = (tag, props = {}, ...children) => {
 };
 
 export function setupUI() {
-  // --- DOM refs ---
-  const paramsList        = document.getElementById('paramsList');
-  const addParamForm      = document.getElementById('addParamForm');
-  const paramNameInput    = document.getElementById('paramName');
-  const entryParam        = document.getElementById('entryParam');
-  const chartParam        = document.getElementById('chartParam');
-  const entriesList       = document.getElementById('entriesList');
-  const entryForm         = document.getElementById('entryForm');
-  const currentDateSpan   = document.getElementById('currentDate');
-  const ratingInput       = document.getElementById('rating');
-  const ratingValue       = document.getElementById('ratingValue');
-  const commentInput      = document.getElementById('comment');
-  const goalsList         = document.getElementById('goalsList');
-  const goalForm          = document.getElementById('goalForm');
-  const goalParamSelect   = document.getElementById('goalParam');
-  const goalTargetInput   = document.getElementById('goalTarget');
-  const goalTargetValue   = document.getElementById('goalTargetValue');
-  const goalSessionsInput = document.getElementById('goalSessions');
-  const goalSessionsValue = document.getElementById('goalSessionsValue');
-  const weeklyHistoryDiv  = document.getElementById('weeklyHistory');
+
+  // ─── DOM refs: entry form ───────────────────────────────────────────────────
+  const paramsList      = document.getElementById('paramsList');
+  const addParamForm    = document.getElementById('addParamForm');
+  const paramNameInput  = document.getElementById('paramName');
+  const entryParam      = document.getElementById('entryParam');
+  const entriesList     = document.getElementById('entriesList');
+  const entryForm       = document.getElementById('entryForm');
+  const currentDateSpan = document.getElementById('currentDate');
+  const ratingInput     = document.getElementById('rating');
+  const ratingValue     = document.getElementById('ratingValue');
+  const durationInput   = document.getElementById('duration');
+  const commentInput    = document.getElementById('comment');
+
+  // ─── DOM refs: chart controls ───────────────────────────────────────────────
+  const chartParam          = document.getElementById('chartParam');
+  const chartModeSelect     = document.getElementById('chartMode');
+  const chartIntervalSelect = document.getElementById('chartInterval');
+  const trendToggle         = document.getElementById('trendToggle');
+  const statsCardsDiv       = document.getElementById('statsCards');
+
+  // ─── DOM refs: goals ────────────────────────────────────────────────────────
+  const goalsList          = document.getElementById('goalsList');
+  const goalForm           = document.getElementById('goalForm');
+  const goalParamSelect    = document.getElementById('goalParam');
+  const goalModeSelect     = document.getElementById('goalMode');
+  const goalIntervalSelect = document.getElementById('goalInterval');
+  const goalTargetInput    = document.getElementById('goalTarget');
+  const goalTargetValue    = document.getElementById('goalTargetValue');
+
+  // ─── DOM refs: history ──────────────────────────────────────────────────────
+  const historyDiv = document.getElementById('weeklyHistory');
+
+  // ─── DOM refs: regression thresholds ───────────────────────────────────────
+  const thresholdForm          = document.getElementById('thresholdForm');
+  const thresholdParamSelect   = document.getElementById('thresholdParam');
+  const thresholdWeeklyInput   = document.getElementById('thresholdWeekly');
+  const thresholdMonthlyInput  = document.getElementById('thresholdMonthly');
+  const thresholdYearlyInput   = document.getElementById('thresholdYearly');
 
   currentDateSpan.textContent = new Date().toLocaleDateString();
 
@@ -64,12 +77,24 @@ export function setupUI() {
     alert('[Prism] Storage limit reached. Export your data and clear old entries.');
   });
 
-  // --- Parameters ---
+  // ─── Chart state ────────────────────────────────────────────────────────────
+  const chartState = { mode: 'rating', interval: 'weekly', showTrend: false };
+
+  function rerenderChart() {
+    const paramId   = chartParam?.value;
+    const paramName = chartParam?.selectedOptions[0]?.text;
+    if (!paramId) return;
+    renderChart({ paramId, paramName, ...chartState });
+    renderStatsCards(paramId, chartState.mode);
+  }
+
+  // ─── Parameters ─────────────────────────────────────────────────────────────
   function renderParams() {
     paramsList.innerHTML = '';
     entryParam.innerHTML = '';
     chartParam.innerHTML = '';
-    if (goalParamSelect) goalParamSelect.innerHTML = '';
+    if (goalParamSelect)     goalParamSelect.innerHTML     = '';
+    if (thresholdParamSelect) thresholdParamSelect.innerHTML = '';
 
     for (const p of getParameters()) {
       const li  = el('li');
@@ -80,20 +105,20 @@ export function setupUI() {
           renderParams();
           renderEntries();
           renderGoals();
-          renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+          rerenderChart();
         }
       };
       li.appendChild(document.createTextNode(p.name));
       li.appendChild(del);
       paramsList.appendChild(li);
 
-      for (const sel of [entryParam, chartParam, goalParamSelect].filter(Boolean)) {
+      for (const sel of [entryParam, chartParam, goalParamSelect, thresholdParamSelect].filter(Boolean)) {
         sel.appendChild(el('option', { value: p.id }, p.name));
       }
     }
   }
 
-  // --- Entries ---
+  // ─── Entries ─────────────────────────────────────────────────────────────────
   function renderEntries(date = getTodayDate()) {
     entriesList.innerHTML = '';
     const entries = getEntries().filter(e => e.date === date);
@@ -107,15 +132,16 @@ export function setupUI() {
 
     for (const e of entries) {
       const displayName = resolveParamName(e.parameterId, e.parameterName);
-      const nameStrong  = el('strong', {}, displayName);
-      const periodEm    = el('em', { style: { color: 'var(--muted)' } }, `(${e.period})`);
-      const commentDiv  = el('div', { className: 'comment' }, e.comment || '');
-      const infoDiv     = el('div', {});
+      const durText     = e.duration != null ? ` · ${e.duration}min` : '';
+
+      const nameStrong = el('strong', {}, displayName);
+      const periodEm   = el('em', { style: { color: 'var(--muted)' } }, `(${e.period})`);
+      const infoDiv    = el('div', {});
       infoDiv.appendChild(nameStrong);
       infoDiv.appendChild(document.createTextNode(' '));
       infoDiv.appendChild(periodEm);
-      infoDiv.appendChild(document.createTextNode(` — ${e.rating}`));
-      infoDiv.appendChild(commentDiv);
+      infoDiv.appendChild(document.createTextNode(` — ${e.rating}${durText}`));
+      if (e.comment) infoDiv.appendChild(el('div', { className: 'comment' }, e.comment));
 
       const del = el('button', { className: 'btn-sm' }, 'Delete');
       del.onclick = () => {
@@ -123,7 +149,7 @@ export function setupUI() {
           deleteEntry(e.id);
           renderEntries(getTodayDate());
           renderGoals();
-          renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+          rerenderChart();
         }
       };
 
@@ -134,144 +160,192 @@ export function setupUI() {
     }
   }
 
-  // --- Goals ---
+  // ─── Goals ───────────────────────────────────────────────────────────────────
+  // Uses computeAverages from chart.js — no duplicated aggregation logic
   function renderGoals() {
     if (!goalsList) return;
-    const goals     = getGoals();
-    const entries   = getEntries();
-    const weekStart = getWeekStart();
-
+    const goals = getGoals(); // now an array
     goalsList.innerHTML = '';
 
-    if (Object.keys(goals).length === 0) {
+    if (goals.length === 0) {
       goalsList.innerHTML = '<li class="muted">No goals set yet.</li>';
       return;
     }
 
-    for (const [paramId, goal] of Object.entries(goals)) {
-      const paramName      = resolveParamName(paramId, paramId);
-      const weekEntries    = entries.filter(
-        e => e.parameterId === paramId && e.date >= weekStart
-      );
-      const uniqueSessions = new Set(
-        weekEntries.map(e => `${e.date}__${e.period}`)
-      ).size;
-      const avg = weekEntries.length === 0
-        ? null
-        : Number((weekEntries.reduce((s, e) => s + e.rating, 0) / weekEntries.length).toFixed(2));
+    for (const goal of goals) {
+      const paramName = resolveParamName(goal.parameterId, goal.parameterId);
+      const avgs      = computeAverages(goal.parameterId, goal.mode);
+      const actual    = avgs[goal.interval] ?? null;
+      const met       = actual !== null ? actual >= goal.target : null;
 
-      const avgOk  = avg  !== null && avg  >= goal.targetWeeklyAvg;
-      const sessOk = uniqueSessions >= goal.targetSessions;
-      const ok     = '#68d391';
-      const miss   = '#fc8181';
+      const ok      = '#68d391';
+      const miss    = '#fc8181';
+      const neutral = 'var(--muted)';
+      const unitLbl = goal.mode === 'duration' ? 'min' : '';
+      const modeLbl = { rating: 'Score', duration: 'Time', weighted: 'Weighted' }[goal.mode] ?? goal.mode;
+      const intLbl  = { weekly: 'Weekly', monthly: 'Monthly', yearly: 'Yearly' }[goal.interval] ?? goal.interval;
 
-      const nameStrong = el('strong', { style: { flex: '1' } }, paramName);
-      const avgSpan    = el('span', {
-        style: { color: avgOk ? ok : miss, fontSize: '13px', marginLeft: '8px' },
-      }, `avg ${avg ?? '—'}/${goal.targetWeeklyAvg} ${avgOk ? '✓' : '✗'}`);
-      const sessSpan   = el('span', {
-        style: { color: sessOk ? ok : miss, fontSize: '13px', marginLeft: '8px' },
-      }, `sessions ${uniqueSessions}/${goal.targetSessions} ${sessOk ? '✓' : '✗'}`);
-      const delBtn     = el('button', { className: 'btn-del', style: { marginLeft: '8px' } }, '✕');
-      delBtn.onclick   = () => {
-        removeGoal(paramId);
+      const nameStrong   = el('strong', { style: { flex: '1' } }, paramName);
+      const metaSpan     = el('span', {
+        style: { color: neutral, fontSize: '12px', marginLeft: '8px' },
+      }, `${intLbl} ${modeLbl}`);
+      const progressSpan = el('span', {
+        style: { color: met === null ? neutral : met ? ok : miss, fontSize: '13px', marginLeft: '8px' },
+      }, `${actual ?? '—'}${unitLbl} / ${goal.target}${unitLbl} ${met === null ? '' : met ? '✓' : '✗'}`);
+      const delBtn = el('button', { className: 'btn-del', style: { marginLeft: '8px' } }, '✕');
+      delBtn.onclick = () => {
+        removeGoal(goal.id);
         renderGoals();
-        renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+        rerenderChart();
       };
 
       const li = el('li', { className: 'goal-item',
         style: { display: 'flex', alignItems: 'center', gap: '4px', padding: '4px 0' },
       });
-      li.append(nameStrong, avgSpan, sessSpan, delBtn);
+      li.append(nameStrong, metaSpan, progressSpan, delBtn);
       goalsList.appendChild(li);
     }
   }
 
-  // --- Weekly History ---
-  function renderWeeklyHistory() {
-    if (!weeklyHistoryDiv) return;
-    const snapshots = getSnapshots();
-    weeklyHistoryDiv.innerHTML = '';
+  // ─── Stats cards ─────────────────────────────────────────────────────────────
+  function renderStatsCards(paramId, mode) {
+    if (!statsCardsDiv || !paramId) return;
+    const avgs    = computeAverages(paramId, mode);
+    const unitLbl = mode === 'duration' ? ' min' : '';
+    const modeLbl = { rating: 'Score', duration: 'Time', weighted: 'Weighted' }[mode] ?? mode;
+    statsCardsDiv.innerHTML = '';
 
-    if (snapshots.length === 0) {
-      weeklyHistoryDiv.appendChild(
-        el('p', { className: 'muted' }, 'No history yet. Snapshots are taken automatically every Monday.')
-      );
-      return;
-    }
+    const wrapper = el('div', {
+      style: { display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '8px' },
+    });
 
-    for (const snap of snapshots) {
-      // Cabeçalho do card
-      const header = el('div', {
-        style: { display: 'flex', justifyContent: 'space-between', marginBottom: '6px' },
-      },
-        el('strong', {}, `${snap.weekStart} → ${snap.weekEnd}`),
-        el('span', { className: 'muted', style: { fontSize: '12px' } },
-          `saved ${new Date(snap.takenAt).toLocaleDateString()}`
-        )
-      );
-
-      // Tabela de rows
-      const table = el('table', { style: { width: '100%', fontSize: '13px', borderCollapse: 'collapse' } });
-      const thead = el('thead');
-      thead.appendChild(el('tr', {},
-        el('th', { style: { textAlign: 'left', paddingBottom: '4px' } }, 'Parameter'),
-        el('th', { style: { textAlign: 'right' } }, 'Avg'),
-        el('th', { style: { textAlign: 'right' } }, 'Sessions'),
-        el('th', { style: { textAlign: 'center' } }, 'Goals'),
-      ));
-      table.appendChild(thead);
-
-      const tbody = el('tbody');
-      for (const row of snap.rows) {
-        const avgDisplay  = row.avgRating    ?? '—';
-        const goalAvgTxt  = row.goalTargetWeeklyAvg !== null ? `/${row.goalTargetWeeklyAvg}` : '';
-        const goalSesTxt  = row.goalTargetSessions  !== null ? `/${row.goalTargetSessions}`  : '';
-
-        // Indicador de goals: ✓✓ ambos, ✓✗ só avg, etc. null se sem goal
-        let goalIndicator = '—';
-        if (row.avgMet !== null || row.sessionsMet !== null) {
-          const a = row.avgMet      === null ? '·' : row.avgMet      ? '✓' : '✗';
-          const s = row.sessionsMet === null ? '·' : row.sessionsMet ? '✓' : '✗';
-          const aColor = row.avgMet      ? '#68d391' : '#fc8181';
-          const sColor = row.sessionsMet ? '#68d391' : '#fc8181';
-          const aSpan  = el('span', { style: { color: aColor } }, `avg${a}`);
-          const sSpan  = el('span', { style: { color: sColor, marginLeft: '6px' } }, `ses${s}`);
-          goalIndicator = el('span', {});
-          goalIndicator.append(aSpan, sSpan);
-        }
-
-        const tr = el('tr', { style: { borderTop: '1px solid var(--border, #333)' } },
-          el('td', { style: { padding: '3px 0' } }, row.parameterName),
-          el('td', { style: { textAlign: 'right' } }, `${avgDisplay}${goalAvgTxt}`),
-          el('td', { style: { textAlign: 'right' } }, `${row.uniqueSessions}${goalSesTxt}`),
-          el('td', { style: { textAlign: 'center' } }),
-        );
-        // Insere o goalIndicator (pode ser string ou nó DOM)
-        tr.cells[3].appendChild(
-          typeof goalIndicator === 'string'
-            ? document.createTextNode(goalIndicator)
-            : goalIndicator
-        );
-        tbody.appendChild(tr);
-      }
-      table.appendChild(tbody);
-
-      const card = el('div', {
+    for (const [interval, value] of Object.entries(avgs)) {
+      const label = { weekly: 'This week', monthly: 'This month', yearly: 'This year' }[interval] ?? interval;
+      const card  = el('div', {
         style: {
-          border:       '1px solid var(--border, #333)',
-          borderRadius: '6px',
-          padding:      '10px',
-          marginBottom: '10px',
+          display:        'flex',
+          flexDirection:  'column',
+          alignItems:     'center',
+          padding:        '8px 14px',
+          border:         '1px solid var(--border, #333)',
+          borderRadius:   '6px',
+          minWidth:       '90px',
         },
       });
-      card.appendChild(header);
-      card.appendChild(table);
-      weeklyHistoryDiv.appendChild(card);
+      card.appendChild(el('span', { style: { fontSize: '11px', color: neutral } }, label));
+      card.appendChild(el('strong', { style: { fontSize: '18px', margin: '4px 0' } },
+        value !== null ? `${value}${unitLbl}` : '—'
+      ));
+      card.appendChild(el('span', { style: { fontSize: '11px', color: neutral } }, modeLbl));
+      wrapper.appendChild(card);
+    }
+
+    statsCardsDiv.appendChild(wrapper);
+  }
+
+  // ─── History ─────────────────────────────────────────────────────────────────
+  function renderHistory() {
+    if (!historyDiv) return;
+    historyDiv.innerHTML = '';
+
+    const sections = [
+      { label: 'Weekly',  snapshots: getWeeklySnapshots()  },
+      { label: 'Monthly', snapshots: getMonthlySnapshots() },
+      { label: 'Yearly',  snapshots: getYearlySnapshots()  },
+    ];
+
+    let anyData = false;
+
+    for (const { label, snapshots } of sections) {
+      if (snapshots.length === 0) continue;
+      anyData = true;
+
+      historyDiv.appendChild(
+        el('h3', { style: { margin: '12px 0 6px', fontSize: '14px' } }, `${label} History`)
+      );
+
+      for (const snap of snapshots) {
+        const header = el('div', {
+          style: { display: 'flex', justifyContent: 'space-between', marginBottom: '6px' },
+        },
+          el('strong', {}, `${snap.periodStart} → ${snap.periodEnd}`),
+          el('span', { className: 'muted', style: { fontSize: '12px' } },
+            `saved ${new Date(snap.takenAt).toLocaleDateString()}`
+          )
+        );
+
+        const table = el('table', {
+          style: { width: '100%', fontSize: '13px', borderCollapse: 'collapse' },
+        });
+        const thead = el('thead');
+        thead.appendChild(el('tr', {},
+          el('th', { style: { textAlign: 'left',    paddingBottom: '4px' } }, 'Parameter'),
+          el('th', { style: { textAlign: 'right'  } }, 'Score'),
+          el('th', { style: { textAlign: 'right'  } }, 'Time'),
+          el('th', { style: { textAlign: 'right'  } }, 'Weighted'),
+          el('th', { style: { textAlign: 'right'  } }, 'Sessions'),
+          el('th', { style: { textAlign: 'center' } }, 'Goals'),
+        ));
+        table.appendChild(thead);
+
+        const tbody = el('tbody');
+        for (const row of snap.rows) {
+          // Build goal indicator nodes — one badge per goal result
+          const goalCell = el('span', {});
+          if (row.goals.length === 0) {
+            goalCell.appendChild(document.createTextNode('—'));
+          } else {
+            for (const g of row.goals) {
+              const modeShort = { rating: 'S', duration: 'T', weighted: 'W' }[g.mode] ?? '?';
+              const intShort  = { weekly: 'w', monthly: 'm', yearly: 'y' }[g.interval]  ?? '?';
+              const color     = g.met === null ? 'var(--muted)' : g.met ? '#68d391' : '#fc8181';
+              const mark      = g.met === null ? '·'           : g.met ? '✓'       : '✗';
+              goalCell.appendChild(
+                el('span', { style: { color, marginRight: '4px', fontSize: '12px' } },
+                  `${modeShort}${intShort}${mark}`
+                )
+              );
+            }
+          }
+
+          const tr = el('tr', { style: { borderTop: '1px solid var(--border, #333)' } },
+            el('td', { style: { padding: '3px 0' } },          row.parameterName),
+            el('td', { style: { textAlign: 'right' } },         row.avgRating    ?? '—'),
+            el('td', { style: { textAlign: 'right' } },
+              row.avgDuration != null ? `${row.avgDuration}m`  : '—'),
+            el('td', { style: { textAlign: 'right' } },         row.weightedScore ?? '—'),
+            el('td', { style: { textAlign: 'right' } },         String(row.uniqueSessions)),
+            el('td', { style: { textAlign: 'center' } }),
+          );
+          tr.cells[5].appendChild(goalCell);
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+
+        const card = el('div', {
+          style: {
+            border:       '1px solid var(--border, #333)',
+            borderRadius: '6px',
+            padding:      '10px',
+            marginBottom: '10px',
+          },
+        });
+        card.appendChild(header);
+        card.appendChild(table);
+        historyDiv.appendChild(card);
+      }
+    }
+
+    if (!anyData) {
+      historyDiv.appendChild(
+        el('p', { className: 'muted' },
+          'No history yet. Snapshots are taken automatically at each week, month, and year boundary.')
+      );
     }
   }
 
-  // --- Events ---
+  // ─── Events ──────────────────────────────────────────────────────────────────
+
   addParamForm.addEventListener('submit', (ev) => {
     ev.preventDefault();
     const name = paramNameInput.value.trim();
@@ -292,17 +366,20 @@ export function setupUI() {
     const paramName = entryParam.selectedOptions[0].text;
     const period    = entryForm.period.value;
     const rating    = ratingInput.value;
+    const duration  = durationInput?.value?.trim() || null;
     const comment   = commentInput.value.trim();
 
-    saveEntry({ date: today, period, parameterId: paramId, parameterName: paramName, rating, comment });
+    saveEntry({ date: today, period, parameterId: paramId, parameterName: paramName,
+                rating, duration, comment });
 
     ratingInput.value       = 7;
     ratingValue.textContent = '7';
+    if (durationInput) durationInput.value = '';
     commentInput.value      = '';
 
     renderEntries(today);
     renderGoals();
-    renderChart(paramId, paramName);
+    rerenderChart();
 
     setTimeout(() => { isSubmitting = false; }, 300);
   });
@@ -311,36 +388,46 @@ export function setupUI() {
     ratingValue.textContent = ratingInput.value;
   });
 
+  chartParam?.addEventListener('change',           () => rerenderChart());
+  chartModeSelect?.addEventListener('change',      () => { chartState.mode     = chartModeSelect.value;     rerenderChart(); });
+  chartIntervalSelect?.addEventListener('change',  () => { chartState.interval = chartIntervalSelect.value; rerenderChart(); });
+  trendToggle?.addEventListener('change',          () => { chartState.showTrend = trendToggle.checked;      rerenderChart(); });
+
   goalForm?.addEventListener('submit', (ev) => {
     ev.preventDefault();
-    const paramId   = goalParamSelect.value;
-    const paramName = goalParamSelect.selectedOptions[0].text;
-    setGoal(paramId, {
-      targetWeeklyAvg: goalTargetInput.value,
-      targetSessions:  goalSessionsInput.value,
+    setGoal({
+      parameterId: goalParamSelect.value,
+      mode:        goalModeSelect?.value     ?? 'rating',
+      interval:    goalIntervalSelect?.value ?? 'weekly',
+      target:      goalTargetInput.value,
     });
     renderGoals();
-    renderChart(paramId, paramName);
+    rerenderChart();
   });
 
   goalTargetInput?.addEventListener('input', () => {
-    goalTargetValue.textContent = goalTargetInput.value;
+    if (goalTargetValue) goalTargetValue.textContent = goalTargetInput.value;
   });
 
-  goalSessionsInput?.addEventListener('input', () => {
-    goalSessionsValue.textContent = goalSessionsInput.value;
+  thresholdForm?.addEventListener('submit', (ev) => {
+    ev.preventDefault();
+    const paramId = thresholdParamSelect?.value;
+    if (!paramId) return;
+    setParameterThresholds(paramId, {
+      weekly:  thresholdWeeklyInput?.value  ?? 3,
+      monthly: thresholdMonthlyInput?.value ?? 12,
+      yearly:  thresholdYearlyInput?.value  ?? 52,
+    });
+    if (chartState.showTrend) rerenderChart();
   });
 
-  chartParam.addEventListener('change', () => {
-    renderChart(chartParam.value, chartParam.selectedOptions[0].text);
-  });
+  // ─── Init ────────────────────────────────────────────────────────────────────
 
-  // --- Init ---
   renderParams();
   renderEntries();
   renderGoals();
-  renderWeeklyHistory();
-  renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+  renderHistory();
+  rerenderChart();
 
   const resetBtn = document.getElementById('reset-storage');
   if (resetBtn) {
@@ -352,15 +439,17 @@ export function setupUI() {
     });
   }
 
-  // Expõe refresh para main.js acionar re-render após virada de semana
   function refresh() {
     currentDateSpan.textContent = new Date().toLocaleDateString();
     renderParams();
     renderEntries();
     renderGoals();
-    renderWeeklyHistory();
-    renderChart(chartParam.value, chartParam.selectedOptions[0]?.text);
+    renderHistory();
+    rerenderChart();
   }
 
   return { refresh };
 }
+
+// Module-scoped neutral color used by renderStatsCards
+const neutral = 'var(--muted)';

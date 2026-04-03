@@ -2,15 +2,17 @@
 const LS_PARAMS           = 'prism:parameters';
 const LS_ENTRIES          = 'prism:entries';
 const LS_GOALS            = 'prism:goals';
-const LS_SNAPSHOTS        = 'prism:weekly_snapshots';
-const LS_LAST_SNAPSHOT_WK = 'prism:last_snapshot_week';
+const LS_SNAPSHOTS_WEEKLY = 'prism:snapshots:weekly';
+const LS_SNAPSHOTS_MONTHLY= 'prism:snapshots:monthly';
+const LS_SNAPSHOTS_YEARLY = 'prism:snapshots:yearly';
+const LS_CURSOR_WK        = 'prism:cursor:weekly';
+const LS_CURSOR_MO        = 'prism:cursor:monthly';
+const LS_CURSOR_YR        = 'prism:cursor:yearly';
 
-const uid = () => {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID();
-  }
-  return Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
-};
+const uid = () =>
+  typeof crypto?.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2, 9);
 
 const readJSON = (key, fallback) => {
   try {
@@ -24,13 +26,15 @@ const writeJSON = (key, obj) => {
     localStorage.setItem(key, JSON.stringify(obj));
   } catch (err) {
     if (err instanceof DOMException && err.name === 'QuotaExceededError') {
-      console.error('[Prism] localStorage quota exceeded. Entry not saved.');
+      console.error('[Prism] localStorage quota exceeded.');
       window.dispatchEvent(new CustomEvent('prism:quotaExceeded'));
     } else {
       throw err;
     }
   }
 };
+
+// ─── Date helpers ─────────────────────────────────────────────────────────────
 
 export const localDateStr = (d) => {
   const year  = d.getFullYear();
@@ -39,23 +43,47 @@ export const localDateStr = (d) => {
   return `${year}-${month}-${day}`;
 };
 
-// --- Parameters ---
+// Exported: used by chart.js, main.js, ui.js — single source of truth.
+export function getWeekStart(d = new Date()) {
+  const day  = d.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
+  return localDateStr(new Date(d.getFullYear(), d.getMonth(), d.getDate() + diff));
+}
+
+// ─── Parameters ───────────────────────────────────────────────────────────────
+// Schema: { id, name, regressionThresholds: { weekly, monthly, yearly } }
+
+const DEFAULT_THRESHOLDS = { weekly: 3, monthly: 12, yearly: 52 };
+
 export function getParameters() {
   let p = readJSON(LS_PARAMS, []);
+
   if (!p || p.length === 0) {
     p = [
-      { id: 'p_sleep', name: 'Sleep' },
-      { id: 'p_study', name: 'Study' },
-      { id: 'p_ex',    name: 'Exercise' },
+      { id: 'p_sleep', name: 'Sleep',    regressionThresholds: { ...DEFAULT_THRESHOLDS } },
+      { id: 'p_study', name: 'Study',    regressionThresholds: { ...DEFAULT_THRESHOLDS } },
+      { id: 'p_ex',    name: 'Exercise', regressionThresholds: { ...DEFAULT_THRESHOLDS } },
     ];
     writeJSON(LS_PARAMS, p);
+    return p;
   }
+
+  // Migration: add regressionThresholds to parameters created before this schema
+  let migrated = false;
+  for (const param of p) {
+    if (!param.regressionThresholds) {
+      param.regressionThresholds = { ...DEFAULT_THRESHOLDS };
+      migrated = true;
+    }
+  }
+  if (migrated) writeJSON(LS_PARAMS, p);
+
   return p;
 }
 
 export function addParameter(name) {
   const p  = getParameters();
-  const np = { id: uid(), name };
+  const np = { id: uid(), name, regressionThresholds: { ...DEFAULT_THRESHOLDS } };
   p.push(np);
   writeJSON(LS_PARAMS, p);
   return np;
@@ -65,25 +93,42 @@ export function removeParameter(id) {
   writeJSON(LS_PARAMS, getParameters().filter(x => x.id !== id));
 }
 
+export function setParameterThresholds(paramId, { weekly, monthly, yearly }) {
+  const params = getParameters();
+  const idx    = params.findIndex(p => p.id === paramId);
+  if (idx < 0) return;
+  params[idx].regressionThresholds = {
+    weekly:  Number(weekly)  || DEFAULT_THRESHOLDS.weekly,
+    monthly: Number(monthly) || DEFAULT_THRESHOLDS.monthly,
+    yearly:  Number(yearly)  || DEFAULT_THRESHOLDS.yearly,
+  };
+  writeJSON(LS_PARAMS, params);
+}
+
 export function resolveParamName(parameterId, fallbackName) {
   const found = getParameters().find(p => p.id === parameterId);
   return found ? found.name : (fallbackName || parameterId);
 }
 
-// --- Entries ---
+// ─── Entries ──────────────────────────────────────────────────────────────────
+// Schema: { id, date, period, parameterId, parameterName,
+//           rating, duration (minutes|null), comment, createdAt }
+
 export function getEntries()     { return readJSON(LS_ENTRIES, []); }
 export function saveEntries(arr) { writeJSON(LS_ENTRIES, arr); }
 
-export function saveEntry({ date, period, parameterId, parameterName, rating, comment }) {
+export function saveEntry({ date, period, parameterId, parameterName, rating, duration, comment }) {
   const e = {
-    id: uid(),
+    id:            uid(),
     date,
     period,
     parameterId,
     parameterName,
-    rating:    Number(rating),
+    rating:        Number(rating),
+    // '' and null both mean "not recorded" — never store 0 as absence
+    duration:      duration != null && duration !== '' ? Number(duration) : null,
     comment,
-    createdAt: new Date().toISOString(),
+    createdAt:     new Date().toISOString(),
   };
   const entries = getEntries();
   entries.push(e);
@@ -95,98 +140,153 @@ export function deleteEntry(id) {
   saveEntries(getEntries().filter(e => e.id !== id));
 }
 
-// --- Goals ---
-export function getGoals() { return readJSON(LS_GOALS, {}); }
+// ─── Goals ────────────────────────────────────────────────────────────────────
+// Schema: Array<{ id, parameterId, mode, interval, target }>
+// mode:     'rating' | 'duration' | 'weighted'
+// interval: 'weekly' | 'monthly' | 'yearly'
+// target:   number (0–10 for rating/weighted, minutes for duration)
 
-export function setGoal(parameterId, { targetWeeklyAvg, targetSessions }) {
+export function getGoals() {
+  const raw = readJSON(LS_GOALS, []);
+  // Migration: old schema was a plain object map — discard, incompatible
+  if (!Array.isArray(raw)) {
+    writeJSON(LS_GOALS, []);
+    return [];
+  }
+  return raw;
+}
+
+// Upsert: replaces existing goal with same (parameterId, mode, interval)
+export function setGoal({ parameterId, mode, interval, target }) {
   const goals = getGoals();
-  goals[parameterId] = {
-    targetWeeklyAvg: Number(targetWeeklyAvg),
-    targetSessions:  Number(targetSessions),
+  const idx   = goals.findIndex(
+    g => g.parameterId === parameterId && g.mode === mode && g.interval === interval
+  );
+  const goal = {
+    id:          idx >= 0 ? goals[idx].id : uid(),
+    parameterId,
+    mode,
+    interval,
+    target:      Number(target),
   };
+  if (idx >= 0) goals[idx] = goal;
+  else          goals.push(goal);
   writeJSON(LS_GOALS, goals);
+  return goal;
 }
 
-export function removeGoal(parameterId) {
-  const goals = getGoals();
-  delete goals[parameterId];
-  writeJSON(LS_GOALS, goals);
+export function removeGoal(goalId) {
+  writeJSON(LS_GOALS, getGoals().filter(g => g.id !== goalId));
 }
 
-// --- Weekly Snapshots ---
-// Schema: Array<{
-//   weekStart: string,       // "YYYY-MM-DD" (Monday)
-//   weekEnd:   string,       // "YYYY-MM-DD" (Sunday)
-//   takenAt:   string,       // ISO timestamp do snapshot
-//   rows: Array<{
-//     parameterId, parameterName,
-//     avgRating, uniqueSessions,
-//     goalTargetWeeklyAvg, goalTargetSessions,
-//     avgMet, sessionsMet        // null se não havia goal
-//   }>
-// }>
-export function getSnapshots() { return readJSON(LS_SNAPSHOTS, []); }
+// ─── Snapshots (internal) ─────────────────────────────────────────────────────
+// Shared schema for all three intervals:
+// { periodStart, periodEnd, takenAt, rows: [
+//   { parameterId, parameterName,
+//     avgRating, avgDuration, weightedScore, uniqueSessions,
+//     goals: [{ goalId, mode, target, actual, met }] }
+// ]}
 
-export function saveWeekSnapshot({ weekStart, weekEnd, entries, goals }) {
-  // Reúne todos os paramIds que tiveram entries OU tinham goals nessa semana
-  const activeParamIds = new Set([
-    ...entries
-      .filter(e => e.date >= weekStart && e.date <= weekEnd)
-      .map(e => e.parameterId),
-    ...Object.keys(goals),
+function _saveSnapshot(lsKey, limit, interval, { periodStart, periodEnd, entries, goals }) {
+  const pe = entries.filter(e => e.date >= periodStart && e.date <= periodEnd);
+  const intervalGoals = goals.filter(g => g.interval === interval);
+
+  const activeIds = new Set([
+    ...pe.map(e => e.parameterId),
+    ...intervalGoals.map(g => g.parameterId),
   ]);
-
-  if (activeParamIds.size === 0) return; // semana vazia — não polui o histórico
+  if (activeIds.size === 0) return;
 
   const rows = [];
-  for (const paramId of activeParamIds) {
-    const weekEntries    = entries.filter(
-      e => e.parameterId === paramId && e.date >= weekStart && e.date <= weekEnd
-    );
-    const uniqueSessions = new Set(weekEntries.map(e => `${e.date}__${e.period}`)).size;
-    const avg            = weekEntries.length === 0
-      ? null
-      : Number((weekEntries.reduce((s, e) => s + e.rating, 0) / weekEntries.length).toFixed(2));
-    const goal           = goals[paramId] ?? null;
+  for (const paramId of activeIds) {
+    const paramEntries = pe.filter(e => e.parameterId === paramId);
+    const withDur      = paramEntries.filter(e => e.duration != null);
+    const totalDur     = withDur.reduce((s, e) => s + e.duration, 0);
+    const uniqueSessions = new Set(paramEntries.map(e => `${e.date}__${e.period}`)).size;
+
+    const avgRating = paramEntries.length === 0 ? null
+      : Number((paramEntries.reduce((s, e) => s + e.rating, 0) / paramEntries.length).toFixed(2));
+
+    const avgDuration = withDur.length === 0 ? null
+      : Number((withDur.reduce((s, e) => s + e.duration, 0) / withDur.length).toFixed(2));
+
+    const weightedScore = withDur.length === 0 ? null
+      : Number((withDur.reduce((s, e) => s + e.rating * e.duration, 0) / totalDur).toFixed(2));
+
+    const goalResults = intervalGoals
+      .filter(g => g.parameterId === paramId)
+      .map(g => {
+        const actual =
+          g.mode === 'rating'   ? avgRating   :
+          g.mode === 'duration' ? avgDuration :
+          g.mode === 'weighted' ? weightedScore : null;
+        return {
+          goalId: g.id,
+          mode:   g.mode,
+          target: g.target,
+          actual,
+          met:    actual !== null ? actual >= g.target : null,
+        };
+      });
 
     rows.push({
-      parameterId:         paramId,
-      parameterName:       resolveParamName(paramId, paramId),
-      avgRating:           avg,
-      uniqueSessions,
-      goalTargetWeeklyAvg: goal?.targetWeeklyAvg ?? null,
-      goalTargetSessions:  goal?.targetSessions  ?? null,
-      avgMet:              goal && avg !== null ? avg >= goal.targetWeeklyAvg : null,
-      sessionsMet:         goal ? uniqueSessions >= goal.targetSessions       : null,
+      parameterId:   paramId,
+      parameterName: resolveParamName(paramId, paramId),
+      avgRating, avgDuration, weightedScore, uniqueSessions,
+      goals: goalResults,
     });
   }
 
-  const snapshots = getSnapshots();
+  const snapshots = readJSON(lsKey, []);
+  const idx       = snapshots.findIndex(s => s.periodStart === periodStart);
+  const record    = { periodStart, periodEnd, takenAt: new Date().toISOString(), rows };
 
-  // Idempotente: substitui se já existir snapshot para essa semana
-  const idx    = snapshots.findIndex(s => s.weekStart === weekStart);
-  const record = { weekStart, weekEnd, takenAt: new Date().toISOString(), rows };
   if (idx >= 0) snapshots[idx] = record;
   else          snapshots.push(record);
 
-  // Mantém apenas as últimas 52 semanas (1 ano)
-  snapshots.sort((a, b) => b.weekStart.localeCompare(a.weekStart));
-  writeJSON(LS_SNAPSHOTS, snapshots.slice(0, 52));
+  snapshots.sort((a, b) => b.periodStart.localeCompare(a.periodStart));
+  writeJSON(lsKey, snapshots.slice(0, limit));
 }
 
-export function getLastSnapshotWeek() {
-  return localStorage.getItem(LS_LAST_SNAPSHOT_WK) ?? null;
+// ─── Snapshots (public) ───────────────────────────────────────────────────────
+
+export function saveWeekSnapshot({ weekStart, weekEnd, entries, goals }) {
+  _saveSnapshot(LS_SNAPSHOTS_WEEKLY, 52, 'weekly', {
+    periodStart: weekStart, periodEnd: weekEnd, entries, goals,
+  });
 }
 
-export function setLastSnapshotWeek(weekStart) {
-  localStorage.setItem(LS_LAST_SNAPSHOT_WK, weekStart);
+export function saveMonthSnapshot({ monthStart, monthEnd, entries, goals }) {
+  _saveSnapshot(LS_SNAPSHOTS_MONTHLY, 24, 'monthly', {
+    periodStart: monthStart, periodEnd: monthEnd, entries, goals,
+  });
 }
 
-// --- Reset ---
+export function saveYearSnapshot({ yearStart, yearEnd, entries, goals }) {
+  _saveSnapshot(LS_SNAPSHOTS_YEARLY, 5, 'yearly', {
+    periodStart: yearStart, periodEnd: yearEnd, entries, goals,
+  });
+}
+
+export function getWeeklySnapshots()  { return readJSON(LS_SNAPSHOTS_WEEKLY,  []); }
+export function getMonthlySnapshots() { return readJSON(LS_SNAPSHOTS_MONTHLY, []); }
+export function getYearlySnapshots()  { return readJSON(LS_SNAPSHOTS_YEARLY,  []); }
+
+// ─── Snapshot cursors ─────────────────────────────────────────────────────────
+
+export function getLastSnapshotWeek()   { return localStorage.getItem(LS_CURSOR_WK) ?? null; }
+export function setLastSnapshotWeek(v)  { localStorage.setItem(LS_CURSOR_WK, v); }
+export function getLastSnapshotMonth()  { return localStorage.getItem(LS_CURSOR_MO) ?? null; }
+export function setLastSnapshotMonth(v) { localStorage.setItem(LS_CURSOR_MO, v); }
+export function getLastSnapshotYear()   { return localStorage.getItem(LS_CURSOR_YR) ?? null; }
+export function setLastSnapshotYear(v)  { localStorage.setItem(LS_CURSOR_YR, v); }
+
+// ─── Reset ────────────────────────────────────────────────────────────────────
+
 export function resetStorage() {
-  localStorage.removeItem(LS_PARAMS);
-  localStorage.removeItem(LS_ENTRIES);
-  localStorage.removeItem(LS_GOALS);
-  localStorage.removeItem(LS_SNAPSHOTS);
-  localStorage.removeItem(LS_LAST_SNAPSHOT_WK);
+  [
+    LS_PARAMS, LS_ENTRIES, LS_GOALS,
+    LS_SNAPSHOTS_WEEKLY, LS_SNAPSHOTS_MONTHLY, LS_SNAPSHOTS_YEARLY,
+    LS_CURSOR_WK, LS_CURSOR_MO, LS_CURSOR_YR,
+  ].forEach(k => localStorage.removeItem(k));
 }
